@@ -1,0 +1,79 @@
+- name: Provision Flask App with Nginx and uWSGI
+  hosts: web
+  become: yes
+
+  tasks:
+    - name: Install packages
+      apt:
+        name: [nginx, python3-pip, python3-venv, uwsgi, uwsgi-plugin-python3]
+        update_cache: yes
+
+    - name: Create project directory
+      file:
+        path: /opt/flaskapp
+        state: directory
+
+    - name: Copy app files
+      copy:
+        src: ../flask-app/
+        dest: /opt/flaskapp/
+        mode: 0755
+
+    - name: Create virtual environment
+      command: python3 -m venv /opt/flaskapp/venv
+      args:
+        creates: /opt/flaskapp/venv
+
+    - name: Install Flask into virtualenv
+      command: /opt/flaskapp/venv/bin/pip install flask
+
+    - name: Create uWSGI systemd service
+      copy:
+        dest: /etc/systemd/system/flask.service
+        content: |
+          [Unit]
+          Description=uWSGI Flask App
+
+          [Service]
+          ExecStart=/usr/bin/uwsgi --ini /opt/flaskapp/wsgi.ini
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable & Start Flask app
+      systemd:
+        name: flask
+        enabled: yes
+        state: restarted
+
+    - name: Configure Nginx
+      copy:
+        dest: /etc/nginx/sites-available/flask
+        content: |
+          server {
+              listen 80;
+              server_name localhost;
+
+              location / {
+                  include uwsgi_params;
+                  uwsgi_pass unix:/tmp/flask.sock;
+              }
+          }
+
+    - name: Enable Nginx config
+      file:
+        src: /etc/nginx/sites-available/flask
+        dest: /etc/nginx/sites-enabled/flask
+        state: link
+        force: yes
+
+    - name: Remove default config
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
